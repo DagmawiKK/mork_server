@@ -92,70 +92,6 @@
 		});
 	}
 
-	async function buildProgressiveGraphFromExplore(expr, initialDepth = 4, maxChildren = 32) {
-		const nodes = new Map();
-		const edges = [];
-		const expandableNodes = new Set();
-		const rootToken = new Uint8Array([]);
-		const q = [{ token: rootToken, depth: 0, parentKey: null }];
-
-		const tokKey = (tok) => (!tok || tok.length === 0 ? 'root' : 't:' + Array.from(tok).join('-'));
-		const addNode = (tok, label, isExpandable, sampleExpr) => {
-			const key = tokKey(tok);
-			if (!nodes.has(key)) {
-				nodes.set(key, { data: { id: key, label, expandable: isExpandable ? 'true' : 'false', token: Array.from(tok), expr: sampleExpr || '' } });
-				if (isExpandable) expandableNodes.add(key);
-			}
-			return key;
-		};
-
-		while (q.length) {
-			const { token, depth, parentKey } = q.shift();
-			let children;
-			try { children = await api.explore(expr, token); } catch { continue; }
-			const limited = children.slice(0, maxChildren);
-			const isExpandable = depth >= initialDepth && limited.length > 0;
-			const nodeKey = addNode(token, depth === 0 ? '(root)' : '…', isExpandable, '');
-			if (parentKey) {
-				edges.push({ data: { id: parentKey + '>' + nodeKey, source: parentKey, target: nodeKey } });
-			}
-			if (depth < initialDepth) {
-				for (const ch of limited) {
-					const childTok = new Uint8Array(ch.token);
-					const childKey = addNode(childTok, ch.expr, depth + 1 >= initialDepth, ch.expr);
-					edges.push({ data: { id: nodeKey + '>' + childKey, source: nodeKey, target: childKey } });
-					q.push({ token: childTok, depth: depth + 1, parentKey: nodeKey });
-				}
-			}
-		}
-
-		const elements = { nodes: Array.from(nodes.values()), edges };
-		const expandNode = async (nodeKey) => {
-			if (!expandableNodes.has(nodeKey)) return { nodes: [], edges: [] };
-			const data = nodes.get(nodeKey).data;
-			const token = new Uint8Array(data.token || []);
-			let children;
-			try { children = await api.explore(expr, token); } catch { return { nodes: [], edges: [] }; }
-			const newNodes = [];
-			const newEdges = [];
-			for (const ch of children.slice(0, maxChildren)) {
-				const childTok = new Uint8Array(ch.token);
-				const childKey = addNode(childTok, ch.expr, true, ch.expr);
-				if (!elements.nodes.find(n => n.data.id === childKey)) newNodes.push(nodes.get(childKey));
-				const edgeId = nodeKey + '>' + childKey;
-				if (!elements.edges.find(e => e.data.id === edgeId)) {
-					const e = { data: { id: edgeId, source: nodeKey, target: childKey } };
-					elements.edges.push(e);
-					newEdges.push(e);
-				}
-			}
-			expandableNodes.delete(nodeKey);
-			nodes.get(nodeKey).data.expandable = 'false';
-			return { nodes: newNodes, edges: newEdges };
-		};
-		return { elements, expandNode };
-	}
-
 	async function renderProgressiveCytoscape(initial, expandFn) {
 		const cy = cytoscape({
 			container: $('#cy'),
@@ -245,12 +181,17 @@
 
 	function markExpandableByteNodes(elements, depthLimit) {
 		const ids = new Set(elements.nodes.map(n => n.data.id));
+		// Map from prefixId to a boolean: does it have any children?
+		const hasChild = new Map();
 		for (const arr of cachedBytePaths) {
 			if (arr.length <= depthLimit) continue;
-			const prefixId = 'p:' + arr.slice(0, depthLimit).join('-');
-			if (ids.has(prefixId)) {
-				const node = elements.nodes.find(n => n.data.id === prefixId);
-				if (node) node.data.expandable = 'true';
+			const prefix = arr.slice(0, depthLimit);
+			const prefixId = 'p:' + prefix.join('-');
+			hasChild.set(prefixId, true);
+		}
+		for (const node of elements.nodes) {
+			if (hasChild.get(node.data.id)) {
+				node.data.expandable = 'true';
 			}
 		}
 	}
@@ -375,11 +316,24 @@
 					} else {  
 						nodeLabel = parts.concat([b]).join('-');  
 					}  
-					
+					let hasDeeper = false;
+					for (const arr of cachedBytePaths) {
+						if (arr.length > parts.length + 1) {
+							let matches = true;
+							for (let i = 0; i < parts.length; i++) {
+								if (arr[i] !== parts[i]) { matches = false; break; }
+							}
+							if (matches && arr[parts.length] === b) {
+								hasDeeper = true;
+								break;
+							}
+						}
+					}
+									
 					const nodeData = {   
 						id: toKey,   
 						label: nodeLabel,   
-						expandable: 'true',  
+						expandable: hasDeeper ? 'true' : 'false',  
 						rawBytes: parts.concat([b]).join('-')  
 					};  
 					
@@ -613,7 +567,14 @@
 		const data = $('#data').value;
 		const statusEl = $('#upload-status');
 		statusEl.textContent = 'Uploading...';
-		try { statusEl.textContent = await api.upload(pattern, template, data, 'metta'); } catch (e) { statusEl.textContent = 'Error: ' + e.message; }
+		try {
+			statusEl.textContent = await api.upload(pattern, template, data, 'metta');
+			// Clear caches after successful upload
+			cachedSymbolTokens = [];
+			cachedBytePaths = [];
+		} catch (e) {
+			statusEl.textContent = 'Error: ' + e.message;
+		}
 	});
 
 	$('#btn-explore-root').addEventListener('click', async () => {
@@ -632,18 +593,6 @@
 		const out = $('#export-output');
 		out.textContent = 'Exporting...';
 		try { out.textContent = await api.exportPaths(pat, tmpl); } catch (e) { out.textContent = 'Error: ' + e.message; }
-	});
-
-	$('#btn-build-graph').addEventListener('click', async () => {
-		const expr = $('#graph-expr').value.trim();
-		const maxDepth = Number($('#graph-depth').value) || 4;
-		const maxChildren = Number($('#graph-breadth').value) || 32;
-		const btn = $('#btn-build-graph');
-		btn.disabled = true;
-		try {
-			const { elements, expandNode } = await buildProgressiveGraphFromExplore(expr, maxDepth, maxChildren);
-			await renderProgressiveCytoscape(elements, expandNode);
-		} catch (e) { alert('Graph build error: ' + e.message); } finally { btn.disabled = false; }
 	});
 
 	$('#btn-build-trie').addEventListener('click', async () => {
@@ -705,7 +654,6 @@
 			await expandNextWave();
 			const after = cyRef.$('node[expandable = "true"]').length;
 			iter++;
-			if (after === before || iter > 1000) break; // safety
 		}
 	}
 

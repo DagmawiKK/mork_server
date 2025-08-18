@@ -44,19 +44,9 @@
 		</div>
 
 		<section class="card graph-card">
-			<h2>Graph View (Cytoscape)</h2>
-			<label>Expr</label>
-			<input id="graph-expr" type="text" value="$x" />
-			<div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
-				<label style="margin:0;">Max Depth</label>
-				<input id="graph-depth" type="number" min="1" max="8" value="4" style="max-width:80px;" />
-				<label style="margin-left:12px; margin-right:0;">Max Children/Node</label>
-				<input id="graph-breadth" type="number" min="1" max="256" value="32" style="max-width:100px;" />
-				<button id="btn-build-graph">Build Graph</button>
-			</div>
+			<h2>Trie View (Cytoscape)</h2>
 			<hr style="border:0;border-top:1px solid #1c2747;margin:12px 0;" />
 			<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-				<label style="margin:0;">Prefix Trie via export</label>
 				<label style="margin-left:12px; margin-right:0;">Pattern</label>
 				<input id="trie-pattern" type="text" value="$x" style="max-width:160px;" />
 				<label style="margin-left:12px; margin-right:0;">Template</label>
@@ -67,6 +57,8 @@
 					<option value="byte">Byte</option>
 					<option value="raw">Raw Bytes</option>
 				</select>
+				<label style="margin:0;">Max Depth</label>
+				<input id="graph-depth" type="number" min="1" max="8" value="4" style="max-width:80px;" />
 				<button id="btn-build-trie">Build Prefix Trie</button>
 				<button id="btn-expand-next">Expand Next</button>
 				<button id="btn-expand-all">Expand All</button>
@@ -79,4 +71,4 @@
 	<script src="https://unpkg.com/cytoscape@3.27.0/dist/cytoscape.min.js"></script>
 	<script src="/static/main.js"></script>
 </body>
-</html> 
+</html>
