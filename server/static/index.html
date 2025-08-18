@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>MORK Trie Demo</title>
+	<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+	<header>
+		<h1>MORK Trie Demo</h1>
+	</header>
+	<main>
+		<div class="sidebar">
+			<section class="card">
+				<h2>Upload S-Expression</h2>
+				<label>Pattern</label>
+				<input id="pattern" type="text" value="$x" />
+				<label>Template</label>
+				<input id="template" type="text" value="$x" />
+				<label>Data (MeTTa S-Expressions)</label>
+				<textarea id="data" rows="6" placeholder="(a b)\n(a c)"></textarea>
+				<button id="btn-upload">Upload</button>
+				<pre id="upload-status"></pre>
+			</section>
+
+			<section class="card">
+				<h2>Explore</h2>
+				<label>Explore Expr</label>
+				<input id="explore-expr" type="text" value="$x" />
+				<button id="btn-explore-root">Explore root</button>
+				<div id="explore-tree" class="tree"></div>
+			</section>
+
+			<section class="card">
+				<h2>Export Paths</h2>
+				<label>Pattern</label>
+				<input id="export-pattern" type="text" value="$x" />
+				<label>Template</label>
+				<input id="export-template" type="text" value="$x" />
+				<button id="btn-export">Export .paths</button>
+				<pre id="export-output"></pre>
+			</section>
+		</div>
+
+		<section class="card graph-card">
+			<h2>Graph View (Cytoscape)</h2>
+			<label>Expr</label>
+			<input id="graph-expr" type="text" value="$x" />
+			<div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+				<label style="margin:0;">Max Depth</label>
+				<input id="graph-depth" type="number" min="1" max="8" value="4" style="max-width:80px;" />
+				<label style="margin-left:12px; margin-right:0;">Max Children/Node</label>
+				<input id="graph-breadth" type="number" min="1" max="256" value="32" style="max-width:100px;" />
+				<button id="btn-build-graph">Build Graph</button>
+			</div>
+			<hr style="border:0;border-top:1px solid #1c2747;margin:12px 0;" />
+			<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+				<label style="margin:0;">Prefix Trie via export</label>
+				<label style="margin-left:12px; margin-right:0;">Pattern</label>
+				<input id="trie-pattern" type="text" value="$x" style="max-width:160px;" />
+				<label style="margin-left:12px; margin-right:0;">Template</label>
+				<input id="trie-template" type="text" value="$x" style="max-width:160px;" />
+				<label style="margin-left:12px; margin-right:0;">View</label>
+				<select id="trie-view" style="max-width:140px;">
+					<option value="symbol" selected>Symbol</option>
+					<option value="byte">Byte</option>
+					<option value="raw">Raw Bytes</option>
+				</select>
+				<button id="btn-build-trie">Build Prefix Trie</button>
+				<button id="btn-expand-next">Expand Next</button>
+				<button id="btn-expand-all">Expand All</button>
+				<button id="btn-export-trie-image">Export Image</button>
+			</div>
+			<p style="margin:8px 0 0; color:#a7b2d9; font-size:12px;">Legend: Orange nodes can be expanded (Explore graph). Click an orange node to load children. Right-click in Symbol view to expand deeper.</p>
+			<div id="cy"></div>
+		</section>
+	</main>
+	<script src="https://unpkg.com/cytoscape@3.27.0/dist/cytoscape.min.js"></script>
+	<script src="/static/main.js"></script>
+</body>
+</html> 

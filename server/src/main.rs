@@ -528,6 +528,38 @@ impl Service<Request<IncomingBody>> for MorkService {
 
     fn call(&self, req: Request<IncomingBody>) -> Self::Future {
 
+        // Serve static demo frontend for root and /static/* paths
+        if req.method() == Method::GET {
+            let path = req.uri().path();
+            if path == "/" || path == "/index.html" || path.starts_with("/static/") {
+                let rel = if path == "/" || path == "/index.html" { "/static/index.html" } else { path };
+                let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), rel.trim_start_matches('/'));
+                let body = match std::fs::read(&full_path) {
+                    Ok(bytes) => bytes,
+                    Err(_e) => {
+                        let resp = MorkServerError::log_err(StatusCode::NOT_FOUND, format!("File not found: {}", rel), None).error_response();
+                        return Box::pin(async { Ok(resp) })
+                    }
+                };
+
+                let content_type = if rel.ends_with(".html") { "text/html; charset=utf-8" }
+                else if rel.ends_with(".js") { "application/javascript" }
+                else if rel.ends_with(".css") { "text/css" }
+                else if rel.ends_with(".json") { "application/json" }
+                else if rel.ends_with(".svg") { "image/svg+xml" }
+                else if rel.ends_with(".png") { "image/png" }
+                else { "text/plain; charset=utf-8" };
+
+                let response_body = Full::new(Bytes::from(body)).map_err(|never| match never {}).boxed();
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header(CONTENT_TYPE, content_type)
+                    .body(response_body)
+                    .unwrap();
+                return Box::pin(async { Ok(resp) });
+            }
+        }
+
         //Get a new connection_id for the request
         let cmd_id = self.0.request_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -570,6 +602,7 @@ impl Service<Request<IncomingBody>> for MorkService {
             | GET => MettaThreadCmd
             | GET => MettaThreadSuspendCmd
             | POST => TransformCmd
+            | GET => PathsResolvedCmd
         }
         #[cfg(feature="neo4j")]
         dispatch!{
@@ -593,6 +626,7 @@ impl Service<Request<IncomingBody>> for MorkService {
             | GET => MettaThreadCmd
             | GET => MettaThreadSuspendCmd
             | POST => TransformCmd
+            | GET => PathsResolvedCmd
         }
     }
 }
