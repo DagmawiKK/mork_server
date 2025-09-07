@@ -755,8 +755,8 @@ type WorkThreadHandle = ();
 impl WorkerPool {
     fn new() -> Self {
         // Keep one core free to handle all the async stuff
-        let thread_count = num_cpus::get() - 1;
-        assert!(thread_count >= 1);
+        let thread_count = thread_count.max(1);
+        // assert!(thread_count >= 1);
 
         // Spin up the worker threads
         let threads = scc::Stack::default();
