@@ -70,17 +70,24 @@
 	</header>
 	<main>
 		<div class="sidebar">
-			<section class="card">
-				<h2>Upload S-Expression</h2>
-				<label>Pattern</label>
-				<input id="pattern" type="text" value="$x" />
-				<label>Template</label>
-				<input id="template" type="text" value="$x" />
-				<label>Data (MeTTa S-Expressions)</label>
-				<textarea id="data" rows="6" placeholder="(a b)\n(a c)"></textarea>
-				<button id="btn-upload">Upload</button>
-				<pre id="upload-status"></pre>
-			</section>
+            <section class="card">
+                <h2>Upload S-Expression</h2>
+                <label>Pattern</label>
+                <input id="pattern" type="text" value="$x" />
+                <label>Template</label>
+                <input id="template" type="text" value="$x" />
+                <label>Data (MeTTa S-Expressions)</label>
+                <textarea id="data" rows="6" placeholder="(a b)\n(a c)"></textarea>
+                <button id="btn-upload">Upload Text</button>
+
+                <hr style="border:0; border-top:1px solid #1c2747; margin:16px 0;" />
+
+                <label>Or Import from URL</label>
+                <input id="import-url" type="text" placeholder="https://example.com/data.metta" />
+                <button id="btn-import-url">Import from URL</button>
+
+                <pre id="upload-status"></pre>
+            </section>
 
 			<section class="card">
 				<h2>Explore</h2>
@@ -159,6 +166,13 @@
 					if (!res.ok) throw new Error(text || res.statusText);
 					return text;
 				},
+				importUrl: async (pattern, template, url) => {
+                    const apiUrl = `/api/import/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?uri=${encodeURIComponent(url)}`;
+                    const res = await fetch(apiUrl);
+                    const text = await res.text();
+                    if (!res.ok) throw new Error(text || res.statusText);
+                    return text;
+                },
 				explore: async (expr, tokenBytes) => {
 					const hasToken = tokenBytes && tokenBytes.length > 0;
 					const tokenStr = hasToken ? encodeToken(tokenBytes) : '';
@@ -781,7 +795,40 @@
 				statusEl.textContent = 'Error: ' + e.message;  
 			}  
 		});
+            $('#btn-import-url').addEventListener('click', async () => {
+                const pattern = $('#pattern').value.trim();
+                const template = $('#template').value.trim();
+                const url = $('#import-url').value.trim();
+                const statusEl = $('#upload-status');
 
+                if (!url) {
+                    statusEl.textContent = 'Error: Please enter a URL to import.';
+                    return;
+                }
+
+                statusEl.textContent = `Requesting import from ${url}...`;
+
+                try {
+                    // Clear server data first to ensure a clean slate
+                    const clearUrl = `/api/clear/${encodeURIComponent(pattern)}`;
+                    await fetch(clearUrl);
+
+                    // Clear client-side state
+                    clearSearchResults();
+                    if (cyRef) {
+                        cyRef.destroy();
+                        cyRef = null;
+                    }
+                    lastExpandFn = null;
+
+                    // Call the import command
+                    const responseText = await api.importUrl(pattern, template, url);
+                    statusEl.textContent = `${responseText}\nImport started in the background.`;
+
+                } catch (e) {
+                    statusEl.textContent = 'Error: ' + e.message;
+                }
+            });
 			$('#btn-explore-root').addEventListener('click', async () => {
 				const expr = $('#explore-expr').value.trim();
 				const tree = $('#explore-tree');
