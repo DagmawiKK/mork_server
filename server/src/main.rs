@@ -679,8 +679,9 @@ mod worker_pool {
     impl WorkerPool {
         pub fn new() -> Self {
             // We want to reserve one OS thread for dealing with the responses and the watchdog
-            let thread_count = tokio::runtime::Handle::current().metrics().num_workers() - 1;
-            assert!(thread_count >= 1);
+            let thread_count = (tokio::runtime::Handle::current().metrics().num_workers() - 1).max(1);
+
+            // assert!(thread_count >= 1);
 
             Self {
                 thread_count,
