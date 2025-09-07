@@ -7,7 +7,7 @@
 	let cyRef = null;
 	const api = {
 		upload: async (pattern, template, data, format = 'metta') => {
-			const url = `/upload/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=${encodeURIComponent(format)}`;
+			const url = `/api/upload/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=${encodeURIComponent(format)}`;
 			const res = await fetch(url, { method: 'POST', body: data });
 			const text = await res.text();
 			if (!res.ok) throw new Error(text || res.statusText);
@@ -17,32 +17,57 @@
 			const hasToken = tokenBytes && tokenBytes.length > 0;
 			const tokenStr = hasToken ? encodeToken(tokenBytes) : '';
 			const url = hasToken
-				? `/explore/${encodeURIComponent(expr)}/${tokenStr}`
-				: `/explore/${encodeURIComponent(expr)}//`;
+				? `/api/explore/${encodeURIComponent(expr)}/${tokenStr}`
+				: `/api/explore/${encodeURIComponent(expr)}//`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await res.text());
 			return res.json();
 		},
 		exportMetta: async (pattern, template) => {
-			const url = `/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=metta`;
+			const url = `/api/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=metta`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await res.text());
 			return res.text();
 		},
 		exportPaths: async (pattern, template) => {
-			const url = `/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=paths`;
+			const url = `/api/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=paths`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await res.text());
-			return res.text();
+			
+			// Debug: Let's see what we're actually getting
+			const arrayBuffer = await res.arrayBuffer();
+			const bytes = new Uint8Array(arrayBuffer);
+			
+			console.log('Raw bytes:', Array.from(bytes.slice(0, 20)).map(b => b.toString(16)).join(' '));
+			console.log('Content-Type:', res.headers.get('content-type'));
+			console.log('Content-Length:', res.headers.get('content-length'));
+			
+			// Try different decodings
+			try {
+				const utf8 = new TextDecoder('utf-8').decode(bytes);
+				console.log('UTF-8 attempt:', utf8.slice(0, 100));
+			} catch (e) {
+				console.log('UTF-8 failed:', e.message);
+			}
+			
+			try {
+				const latin1 = new TextDecoder('latin-1').decode(bytes);
+				console.log('Latin-1 attempt:', latin1.slice(0, 100));
+			} catch (e) {
+				console.log('Latin-1 failed:', e.message);
+			}
+			
+			// Return the raw bytes for now so we can see what's happening
+			return `Raw bytes: ${Array.from(bytes.slice(0, 100)).join(', ')}`;
 		},
 		exportRaw: async (pattern, template) => {
-			const url = `/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=raw`;
+			const url = `/api/export/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}?format=raw`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await res.text());
 			return res.text();
 		},
 		pathsResolved: async (pattern, template, maxWrite) => {
-			const url = `/paths_resolved/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}${maxWrite?`?max_write=${maxWrite}`:''}`;
+			const url = `/api/paths_resolved/${encodeURIComponent(pattern)}/${encodeURIComponent(template)}${maxWrite?`?max_write=${maxWrite}`:''}`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await res.text());
 			return res.json();
@@ -143,6 +168,17 @@
 					cy.layout({ name: 'breadthfirst', directed: true, padding: 10, spacingFactor: 1.1 }).run();
 				}
 			} catch (e) { console.error('Trie expansion error', e); }
+		});
+
+		cy.on('cxttap', 'node[expandable = "true"]', async (evt) => {
+			evt.preventDefault();
+			const node = evt.target;
+			const id = node.id();
+			try {
+				await expandNodeBranch(id);
+			} catch (e) { 
+				console.error('Branch expansion error', e); 
+			}
 		});
 		return cy;
 	}
@@ -561,21 +597,44 @@
 		return { elements, expandNode };  
 	}
 
-	$('#btn-upload').addEventListener('click', async () => {
-		const pattern = $('#pattern').value.trim();
-		const template = $('#template').value.trim();
-		const data = $('#data').value;
-		const statusEl = $('#upload-status');
-		statusEl.textContent = 'Uploading...';
-		try {
-			statusEl.textContent = await api.upload(pattern, template, data, 'metta');
-			// Clear caches after successful upload
-			cachedSymbolTokens = [];
-			cachedBytePaths = [];
-		} catch (e) {
-			statusEl.textContent = 'Error: ' + e.message;
-		}
-	});
+	$('#btn-upload').addEventListener('click', async () => {  
+    const pattern = $('#pattern').value.trim();  
+    const template = $('#template').value.trim();  
+    const data = $('#data').value;  
+    const statusEl = $('#upload-status');  
+    statusEl.textContent = 'Uploading...';  
+    
+    try {  
+        // Clear server data first to avoid accumulation  
+        const clearUrl = `/api/clear/${encodeURIComponent(pattern)}`;  
+        const clearRes = await fetch(clearUrl);  
+        if (!clearRes.ok) throw new Error(await clearRes.text());  
+        
+        // Clear client-side caches BEFORE upload  
+        cachedSymbolTokens = [];  
+        cachedBytePaths = [];  
+        
+        // Clear search results and UI state
+        clearSearchResults();
+        
+        // Clear any existing visualization properly  
+        if (cyRef) {  
+            cyRef.destroy();  
+            cyRef = null;  
+        }  
+        lastExpandFn = null; // Also clear the expand function  
+        
+        // Reset trie builder inputs to allow new patterns
+        $('#trie-pattern').value = '$x';
+        $('#trie-template').value = '$x';
+        
+        // Upload new data  
+        statusEl.textContent = await api.upload(pattern, template, data, 'metta');  
+        
+    } catch (e) {  
+        statusEl.textContent = 'Error: ' + e.message;  
+    }  
+});
 
 	$('#btn-explore-root').addEventListener('click', async () => {
 		const expr = $('#explore-expr').value.trim();
@@ -646,15 +705,61 @@
 		}
 		cyRef.layout({ name: 'breadthfirst', directed: true, padding: 10, spacingFactor: 1.1 }).run();
 	}
-	async function expandAll() {
+	async function expandAll() {  
+		if (!cyRef || !lastExpandFn) {  
+			console.warn('No active visualization to expand');  
+			return;  
+		}  
+		
+		let iter = 0;  
+		while (true) {  
+			const before = cyRef.$('node[expandable = "true"]').length;  
+			if (!before) break;  
+			await expandNextWave();  
+			const after = cyRef.$('node[expandable = "true"]').length;  
+			iter++;  
+		}  
+	}
+
+	// Add this function after the existing expandAll function
+	async function expandNodeBranch(nodeId) {
+		if (!cyRef || !lastExpandFn) {
+			console.warn('No active visualization to expand');
+			return;
+		}
+		
+		let nodesToExpand = [nodeId];
 		let iter = 0;
-		while (true) {
-			const before = cyRef.$('node[expandable = "true"]').length;
-			if (!before) break;
-			await expandNextWave();
-			const after = cyRef.$('node[expandable = "true"]').length;
+		const maxIter = 100; // Prevent infinite loops
+		
+		while (nodesToExpand.length > 0 && iter < maxIter) {
+			const currentNodeId = nodesToExpand.shift();
+			const node = cyRef.getElementById(currentNodeId);
+			
+			if (!node.length || node.data('expandable') !== 'true') continue;
+			
+			try {
+				const { nodes: newNodes, edges: newEdges } = await lastExpandFn(currentNodeId);
+				if (newNodes.length > 0 || newEdges.length > 0) {
+					cyRef.add([...newNodes, ...newEdges]);
+					node.data('expandable', 'false');
+					
+					// Add new expandable children to the queue
+					for (const newNode of newNodes) {
+						if (newNode.data.expandable === 'true') {
+							nodesToExpand.push(newNode.data.id);
+						}
+					}
+				}
+			} catch (e) {
+				console.error('Branch expansion error for node', currentNodeId, e);
+			}
+			
 			iter++;
 		}
+		
+		// Re-layout the graph
+		cyRef.layout({ name: 'breadthfirst', directed: true, padding: 10, spacingFactor: 1.1 }).run();
 	}
 
 	$('#btn-expand-next').addEventListener('click', async () => {
@@ -665,4 +770,496 @@
 		const btn = $('#btn-expand-all'); btn.disabled = true;
 		try { await expandAll(); } finally { btn.disabled = false; }
 	});
-})(); 
+	
+	// Search API functions
+	const searchAPI = {
+		async patternSearch(pattern, maxResults = 100) {
+			try {
+				const items = await api.pathsResolved(pattern, '$x', maxResults);
+				return items.map(item => ({
+					expression: item.expr,
+					rawPath: item.raw,
+					tokens: this.parseTokens(item.expr),
+					type: 'pattern'
+				}));
+			} catch (e) {
+				console.error('Pattern search error:', e);
+				return [];
+			}
+		},
+
+		async fuzzySearch(searchTerm, maxResults = 100) {
+			try {
+				const allItems = await api.pathsResolved('$x', '$x', 1000);
+				const filtered = allItems.filter(item => {
+					const tokens = this.parseTokens(item.expr);
+					return tokens.some(token => 
+						token.toLowerCase().includes(searchTerm.toLowerCase())
+					);
+				}).slice(0, maxResults);
+
+				return filtered.map(item => ({
+					expression: item.expr,
+					rawPath: item.raw,
+					tokens: this.parseTokens(item.expr),
+					type: 'fuzzy'
+				}));
+			} catch (e) {
+				console.error('Fuzzy search error:', e);
+				return [];
+			}
+		},
+
+		async exactSearch(searchTerm, maxResults = 100) {
+			try {
+				// Create exact pattern by wrapping in quotes if needed
+				const exactPattern = searchTerm.includes(' ') || searchTerm.includes('(') 
+					? searchTerm 
+					: `"${searchTerm}"`;
+				
+				const items = await api.pathsResolved(exactPattern, '$x', maxResults);
+				return items.map(item => ({
+					expression: item.expr,
+					rawPath: item.raw,
+					tokens: this.parseTokens(item.expr),
+					type: 'exact'
+				}));
+			} catch (e) {
+				console.error('Exact search error:', e);
+				return [];
+			}
+		},
+
+		parseTokens(expr) {
+			return (expr.match(/\"(?:[^\"\\]|\\.)*\"|[^\s()]+/g) || [])
+				.map(t => t.replace(/^\"|\"$/g, ''));
+		}
+	};
+
+	// Search results management
+	let currentSearchResults = [];
+
+	function displaySearchResults(results, searchTerm, searchType) {
+		const resultsDiv = $('#search-results');
+		resultsDiv.innerHTML = '';
+		currentSearchResults = results;
+
+		if (!results || results.length === 0) {
+			resultsDiv.innerHTML = '<div style="color: #a7b2d9; padding: 8px;">No results found</div>';
+			return;
+		}
+
+		const header = document.createElement('div');
+		header.style.cssText = 'color: #a7b2d9; font-size: 12px; margin-bottom: 8px;';
+		header.textContent = `Found ${results.length} results for "${searchTerm}"`;
+		resultsDiv.appendChild(header);
+
+		results.forEach((result, index) => {
+			const resultItem = document.createElement('div');
+			resultItem.className = 'search-result-item';
+			
+			const exprDiv = document.createElement('div');
+			exprDiv.className = 'result-expr';
+			exprDiv.textContent = result.expression;
+			
+			const tokenDiv = document.createElement('div');
+			tokenDiv.className = 'result-token';
+			tokenDiv.textContent = `Raw: ${result.rawPath}`;
+			
+			const actionsDiv = document.createElement('div');
+			actionsDiv.className = 'result-actions';
+			
+			const showButton = document.createElement('button');
+			showButton.textContent = 'Show in Trie';
+			showButton.addEventListener('click', () => highlightInTrie(index));
+			
+			const expandButton = document.createElement('button');
+			expandButton.textContent = 'Expand to Node';
+			expandButton.addEventListener('click', () => expandToNode(index));
+			
+			const rebuildButton = document.createElement('button');
+			rebuildButton.textContent = 'Rebuild Current';
+			rebuildButton.addEventListener('click', rebuildTrieForSearch);
+			rebuildButton.style.cssText = 'margin-left: 4px; background: #28a745;';
+
+			const newTrieButton = document.createElement('button');
+			newTrieButton.textContent = 'New Trie';
+			newTrieButton.addEventListener('click', () => {
+				$('#trie-pattern').value = $('#search-pattern').value || '$x';
+				$('#trie-template').value = '$x';
+				$('#btn-build-trie').click();
+			});
+			newTrieButton.style.cssText = 'margin-left: 4px; background: #17a2b8;';
+
+			actionsDiv.appendChild(showButton);
+			actionsDiv.appendChild(expandButton);
+			actionsDiv.appendChild(rebuildButton);
+			actionsDiv.appendChild(newTrieButton);
+			
+			resultItem.appendChild(exprDiv);
+			resultItem.appendChild(tokenDiv);
+			resultItem.appendChild(actionsDiv);
+			
+			resultsDiv.appendChild(resultItem);
+			// const rebuildButton = document.createElement('button');
+			rebuildButton.textContent = 'Rebuild Trie';
+			rebuildButton.addEventListener('click', rebuildTrieForSearch);
+			rebuildButton.style.cssText = 'margin-left: 4px; background: #28a745;';
+
+			actionsDiv.appendChild(showButton);
+			actionsDiv.appendChild(expandButton);
+			actionsDiv.appendChild(rebuildButton);
+		});
+	}
+
+	// Trie navigation and highlighting
+	async function highlightInTrie(resultIndex) {
+		if (!cyRef || resultIndex >= currentSearchResults.length) {
+			alert('Please build a trie first or invalid result');
+			return;
+		}
+
+		const result = currentSearchResults[resultIndex];
+		let nodeFound = false;
+
+		console.log('Highlighting search result:', result);
+		console.log('Current view:', currentView);
+		console.log('Available nodes:', cyRef.nodes().map(n => n.data('id')));
+
+		// Try different approaches based on current trie view
+		if (currentView === 'symbol') {
+			// For symbol view, parse the expression tokens
+			const tokens = searchAPI.parseTokens(result.expression);
+			console.log('Symbol tokens to search:', tokens);
+			
+			// Try to find node at various symbol depths
+			for (let depth = Math.min(tokens.length, 6); depth >= 1; depth--) {
+				const pathPrefix = tokens.slice(0, depth);
+				const nodeId = 's:' + pathPrefix.join('/');
+				console.log('Trying symbol nodeId:', nodeId);
+				const node = cyRef.getElementById(nodeId);
+				
+				if (node.length > 0) {
+					// Clear previous highlights and highlight this node
+					cyRef.nodes().removeClass('highlighted-node');
+					node.addClass('highlighted-node');
+					cyRef.center(node);
+					cyRef.fit(node, 100);
+					
+					setTimeout(() => node.removeClass('highlighted-node'), 3000);
+					nodeFound = true;
+					break;
+				}
+			}
+			
+			// If not found in symbol view, also try to search by node labels
+			if (!nodeFound) {
+				console.log('Node not found by ID, trying by label...');
+				const targetToken = tokens[0]; // First token
+				const nodesByLabel = cyRef.nodes().filter(n => n.data('label') === targetToken);
+				if (nodesByLabel.length > 0) {
+					const node = nodesByLabel[0];
+					cyRef.nodes().removeClass('highlighted-node');
+					node.addClass('highlighted-node');
+					cyRef.center(node);
+					cyRef.fit(node, 100);
+					
+					setTimeout(() => node.removeClass('highlighted-node'), 3000);
+					nodeFound = true;
+					console.log('Found node by label:', node.data('id'));
+				}
+			}
+		} else {
+			// For byte/raw view, use byte paths
+			// Handle both "[193, 65, 193, 66]" and "193 65 193 66" formats
+			let bytes = [];
+			if (result.rawPath.includes('[')) {
+				// Parse bracket format: "[193, 65, 193, 66]"
+				bytes = result.rawPath.replace(/[\[\]]/g, '').split(',').map(s => parseInt(s.trim(), 10));
+			} else {
+				// Parse space-separated format: "193 65 193 66"
+				bytes = Array.from(result.rawPath.matchAll(/\d+/g)).map(m => parseInt(m[0], 10));
+			}
+			
+			console.log('Parsed bytes:', bytes);
+			
+			// Try to find existing node at various depths
+			for (let depth = Math.min(bytes.length, 6); depth >= 1; depth--) {
+				const pathPrefix = bytes.slice(0, depth);
+				const nodeId = 'p:' + pathPrefix.join('-');
+				console.log('Trying byte nodeId:', nodeId);
+				const node = cyRef.getElementById(nodeId);
+				
+				if (node.length > 0) {
+					// Clear previous highlights and highlight this node
+					cyRef.nodes().removeClass('highlighted-node');
+					node.addClass('highlighted-node');
+					cyRef.center(node);
+					cyRef.fit(node, 100);
+					
+					setTimeout(() => node.removeClass('highlighted-node'), 3000);
+					nodeFound = true;
+					break;
+				}
+			}
+		}
+		
+		if (!nodeFound) {
+			console.log('Search result:', result);
+			console.log('Current view:', currentView);
+			console.log('All node IDs in trie:', cyRef.nodes().map(n => n.data('id')));
+			console.log('All node labels in trie:', cyRef.nodes().map(n => n.data('label')));
+			
+			// Show more helpful error message
+			const suggestion = currentView === 'symbol' 
+				? 'The trie might have been built with different data. Try rebuilding the trie or switching to byte/raw view.'
+				: 'Try rebuilding the trie with the same pattern used for search.';
+				
+			alert(`Node not currently visible in trie.\n\nSuggestion: ${suggestion}\n\nTry "Expand to Node" or rebuild the trie.`);
+		}
+	}
+
+	async function expandToNode(resultIndex) {
+		if (!cyRef || !lastExpandFn || resultIndex >= currentSearchResults.length) {
+			alert('Please build a trie first or invalid result');
+			return;
+		}
+
+		const result = currentSearchResults[resultIndex];
+		
+		if (currentView === 'symbol') {
+			// For symbol view, expand based on symbol tokens
+			const tokens = searchAPI.parseTokens(result.expression);
+			
+			// Progressively expand the trie to reveal the target node
+			for (let depth = 1; depth <= Math.min(tokens.length, 8); depth++) {
+				const partialPath = tokens.slice(0, depth);
+				const nodeId = 's:' + partialPath.join('/');
+				
+				let node = cyRef.getElementById(nodeId);
+				
+				// If node doesn't exist, try to expand parent
+				if (!node.length && depth > 1) {
+					const parentPath = tokens.slice(0, depth - 1);
+					const parentNodeId = 's:' + parentPath.join('/');
+					const parentNode = cyRef.getElementById(parentNodeId);
+					
+					if (parentNode.length && parentNode.data('expandable') === 'true') {
+						try {
+							const { nodes: newNodes, edges: newEdges } = await lastExpandFn(parentNodeId);
+							if (newNodes.length > 0 || newEdges.length > 0) {
+								cyRef.add([...newNodes, ...newEdges]);
+								parentNode.data('expandable', 'false');
+								cyRef.layout({ 
+									name: 'breadthfirst', 
+									directed: true, 
+									padding: 10, 
+									spacingFactor: 1.1 
+								}).run();
+							}
+						} catch (e) {
+							console.error('Error expanding to node:', e);
+						}
+					}
+				}
+				
+				// Try to expand current node if it exists and is expandable
+				node = cyRef.getElementById(nodeId);
+				if (node.length && node.data('expandable') === 'true' && depth < Math.min(tokens.length, 8)) {
+					try {
+						const { nodes: newNodes, edges: newEdges } = await lastExpandFn(nodeId);
+						if (newNodes.length > 0 || newEdges.length > 0) {
+							cyRef.add([...newNodes, ...newEdges]);
+							node.data('expandable', 'false');
+						}
+					} catch (e) {
+						console.error('Error expanding node:', e);
+						break;
+					}
+				}
+			}
+		} else {
+			// For byte/raw view, expand based on byte paths
+			// Handle both "[193, 65, 193, 66]" and "193 65 193 66" formats
+			let bytes = [];
+			if (result.rawPath.includes('[')) {
+				// Parse bracket format: "[193, 65, 193, 66]"
+				bytes = result.rawPath.replace(/[\[\]]/g, '').split(',').map(s => parseInt(s.trim(), 10));
+			} else {
+				// Parse space-separated format: "193 65 193 66"
+				bytes = Array.from(result.rawPath.matchAll(/\d+/g)).map(m => parseInt(m[0], 10));
+			}
+			
+			console.log('Expanding to bytes:', bytes);
+			
+			// Progressively expand the trie to reveal the target node
+			for (let depth = 1; depth <= Math.min(bytes.length, 8); depth++) {
+				const partialPath = bytes.slice(0, depth);
+				const nodeId = 'p:' + partialPath.join('-');
+				
+				console.log(`Depth ${depth}, trying nodeId: ${nodeId}`);
+				
+				let node = cyRef.getElementById(nodeId);
+				
+				// If node doesn't exist, try to expand parent
+				if (!node.length && depth > 1) {
+					const parentPath = bytes.slice(0, depth - 1);
+					const parentNodeId = 'p:' + parentPath.join('-');
+					const parentNode = cyRef.getElementById(parentNodeId);
+					
+					console.log(`Node ${nodeId} not found, trying parent: ${parentNodeId}`);
+					
+					if (parentNode.length && parentNode.data('expandable') === 'true') {
+						try {
+							console.log(`Expanding parent ${parentNodeId}`);
+							const { nodes: newNodes, edges: newEdges } = await lastExpandFn(parentNodeId);
+							if (newNodes.length > 0 || newEdges.length > 0) {
+								cyRef.add([...newNodes, ...newEdges]);
+								parentNode.data('expandable', 'false');
+								cyRef.layout({ 
+									name: 'breadthfirst', 
+									directed: true, 
+									padding: 10, 
+									spacingFactor: 1.1 
+								}).run();
+							}
+						} catch (e) {
+							console.error('Error expanding to node:', e);
+						}
+					}
+				}
+				
+				// Try to expand current node if it exists and is expandable
+				node = cyRef.getElementById(nodeId);
+				if (node.length && node.data('expandable') === 'true' && depth < Math.min(bytes.length, 8)) {
+					try {
+						console.log(`Expanding current node ${nodeId}`);
+						const { nodes: newNodes, edges: newEdges } = await lastExpandFn(nodeId);
+						if (newNodes.length > 0 || newEdges.length > 0) {
+							cyRef.add([...newNodes, ...newEdges]);
+							node.data('expandable', 'false');
+						}
+					} catch (e) {
+						console.error('Error expanding node:', e);
+						break;
+					}
+				}
+			}
+		}
+		
+		// Final layout and highlight
+		cyRef.layout({ 
+			name: 'breadthfirst', 
+			directed: true, 
+			padding: 10, 
+			spacingFactor: 1.1 
+		}).run();
+		
+		// Highlight the deepest visible node
+		setTimeout(() => {
+			highlightInTrie(resultIndex);
+		}, 1000);
+	}
+
+
+	function clearSearchResults() {
+		$('#search-results').innerHTML = '';
+		currentSearchResults = [];
+		if (cyRef) {
+			cyRef.nodes().removeClass('highlighted-node');
+		}
+	}
+	async function rebuildTrieForSearch() {
+		if (currentSearchResults.length === 0) {
+			alert('No search results to build trie for. Upload data first and then search.');
+			return;
+		}
+		
+		// Use current trie settings instead of overwriting them
+		const currentPattern = $('#trie-pattern').value.trim() || '$x';
+		const currentTemplate = $('#trie-template').value.trim() || '$x';
+		
+		try {
+			// Just trigger rebuild with current settings
+			$('#btn-build-trie').click();
+			
+			setTimeout(() => {
+				alert('Trie rebuilt with current pattern. Try "Show in Trie" again.');
+			}, 1000);
+		} catch (e) {
+			alert('Error rebuilding trie: ' + e.message);
+		}
+	}
+	$('#btn-reset-trie').addEventListener('click', () => {
+		// Clear visualization
+		if (cyRef) {
+			cyRef.destroy();
+			cyRef = null;
+		}
+		lastExpandFn = null;
+		
+		// Reset inputs to defaults
+		$('#trie-pattern').value = '$x';
+		$('#trie-template').value = '$x';
+		$('#trie-view').value = 'symbol';
+		$('#graph-depth').value = '4';
+		
+		// Clear caches
+		cachedSymbolTokens = [];
+		cachedBytePaths = [];
+		
+		// Clear search results
+		clearSearchResults();
+		
+		alert('Trie reset. You can now build a new trie with different patterns.');
+	});
+	// Event listeners for search functionality
+	$('#btn-search').addEventListener('click', async () => {
+		const searchPattern = $('#search-pattern').value.trim();
+		const searchType = $('#search-type').value;
+		const resultsDiv = $('#search-results');
+		const searchBtn = $('#btn-search');
+		
+		if (!searchPattern) {
+			resultsDiv.innerHTML = '<div style="color: #ff6b35; padding: 8px;">Please enter a search pattern</div>';
+			return;
+		}
+		
+		searchBtn.disabled = true;
+		searchBtn.textContent = 'Searching...';
+		resultsDiv.innerHTML = '<div style="color: #a7b2d9; padding: 8px;">Searching...</div>';
+		
+		try {
+			let results = [];
+			
+			switch (searchType) {
+				case 'pattern':
+					results = await searchAPI.patternSearch(searchPattern, 50);
+					break;
+				case 'fuzzy':
+					results = await searchAPI.fuzzySearch(searchPattern, 50);
+					break;
+				case 'exact':
+					results = await searchAPI.exactSearch(searchPattern, 50);
+					break;
+			}
+			
+			displaySearchResults(results, searchPattern, searchType);
+			
+		} catch (e) {
+			resultsDiv.innerHTML = `<div style="color: #ff6b35; padding: 8px;">Search error: ${e.message}</div>`;
+		} finally {
+			searchBtn.disabled = false;
+			searchBtn.textContent = 'Search';
+		}
+	});
+
+	$('#btn-clear-search').addEventListener('click', clearSearchResults);
+
+	// Quick search on Enter key
+	$('#search-pattern').addEventListener('keypress', (e) => {
+		if (e.key === 'Enter') {
+			$('#btn-search').click();
+		}
+	});
+})();

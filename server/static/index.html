@@ -3,12 +3,12 @@
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>MORK Trie Demo</title>
+	<title>MORK Path Extractor and Visualizer</title>
 	<link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
 	<header>
-		<h1>MORK Trie Demo</h1>
+		<h1>MORK Path Extractor and Visualizer</h1>
 	</header>
 	<main>
 		<div class="sidebar">
@@ -41,6 +41,21 @@
 				<button id="btn-export">Export .paths</button>
 				<pre id="export-output"></pre>
 			</section>
+
+			<section class="card">
+				<h2>Search Nodes</h2>
+				<label>Search Pattern</label>
+				<input id="search-pattern" type="text" value="$x" placeholder="e.g., (Edge $ $)" />
+				<label>Search Type</label>
+				<select id="search-type">
+					<option value="pattern">Pattern Match</option>
+					<option value="fuzzy">Fuzzy Search</option>
+					<option value="exact">Exact Match</option>
+				</select>
+				<button id="btn-search">Search</button>
+				<button id="btn-clear-search">Clear</button>
+				<div id="search-results" class="search-results"></div>
+			</section>
 		</div>
 
 		<section class="card graph-card">
@@ -63,6 +78,7 @@
 				<button id="btn-expand-next">Expand Next</button>
 				<button id="btn-expand-all">Expand All</button>
 				<button id="btn-export-trie-image">Export Image</button>
+				<button id="btn-reset-trie">Reset Trie</button>
 			</div>
 			<p style="margin:8px 0 0; color:#a7b2d9; font-size:12px;">Legend: Orange nodes can be expanded (Explore graph). Click an orange node to load children. Right-click in Symbol view to expand deeper.</p>
 			<div id="cy"></div>
