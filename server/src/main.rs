@@ -1,3 +1,4 @@
+
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::{Arc, atomic::AtomicU64};
@@ -531,38 +532,12 @@ impl Service<Request<IncomingBody>> for MorkService {
         if req.method() == Method::GET {
             let path = req.uri().path();
             if path == "/" || path == "/index.html" || path.starts_with("/static/") {
-                let rel = if path == "/" || path == "/index.html" { "static/index.html" } else { path.trim_start_matches('/') };
-                
-                // --- START OF FIX ---
-                // Find the path relative to the executable at runtime
-                let mut exe_path = match std::env::current_exe() {
-                    Ok(path) => path,
-                    Err(_e) => {
-                        let resp = MorkServerError::log_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not determine executable path", None).error_response();
-                        return Box::pin(async { Ok(resp) });
-                    }
-                };
-                // The executable is in `target/release/`, so we go up two directories to the project root.
-                // On Render, the start command is `../target/release/mork_server` from the `server` dir,
-                // so the logic needs to be robust. Let's find the workspace root.
-                
-                // A robust way to find the project root from the executable path
-                let mut project_root = exe_path.clone();
-                while !project_root.join("Cargo.toml").exists() {
-                    if !project_root.pop() {
-                        let resp = MorkServerError::log_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not find project root (Cargo.toml)", None).error_response();
-                        return Box::pin(async { Ok(resp) });
-                    }
-                }
-
-                // The static files are in `server/static` relative to the project root
-                let full_path = project_root.join("server").join(rel);
-                // --- END OF FIX ---
-
+                let rel = if path == "/" || path == "/index.html" { "/static/index.html" } else { path };
+                let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), rel.trim_start_matches('/'));
                 let body = match std::fs::read(&full_path) {
                     Ok(bytes) => bytes,
                     Err(_e) => {
-                        let resp = MorkServerError::log_err(StatusCode::NOT_FOUND, format!("File not found: {}", full_path.display()), None).error_response();
+                        let resp = MorkServerError::log_err(StatusCode::NOT_FOUND, format!("File not found: {}", rel), None).error_response();
                         return Box::pin(async { Ok(resp) })
                     }
                 };
