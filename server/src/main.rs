@@ -535,21 +535,28 @@ impl Service<Request<IncomingBody>> for MorkService {
                 
                 // --- START OF FIX ---
                 // Find the path relative to the executable at runtime
-                let exe_path = match std::env::current_exe() {
+                let mut exe_path = match std::env::current_exe() {
                     Ok(path) => path,
                     Err(_e) => {
                         let resp = MorkServerError::log_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not determine executable path", None).error_response();
                         return Box::pin(async { Ok(resp) });
                     }
                 };
+                // The executable is in `target/release/`, so we go up two directories to the project root.
+                // On Render, the start command is `../target/release/mork_server` from the `server` dir,
+                // so the logic needs to be robust. Let's find the workspace root.
                 
-                // Assume the `static` directory is a sibling of the executable's parent directory.
-                // This is a more robust approach for deployed environments.
-                // e.g., /.../bin/mork_server and /.../static/index.html
-                let mut static_path = exe_path.clone();
-                static_path.pop(); // Remove executable name
-                
-                let full_path = static_path.join(rel);
+                // A robust way to find the project root from the executable path
+                let mut project_root = exe_path.clone();
+                while !project_root.join("Cargo.toml").exists() {
+                    if !project_root.pop() {
+                        let resp = MorkServerError::log_err(StatusCode::INTERNAL_SERVER_ERROR, "Could not find project root (Cargo.toml)", None).error_response();
+                        return Box::pin(async { Ok(resp) });
+                    }
+                }
+
+                // The static files are in `server/static` relative to the project root
+                let full_path = project_root.join("server").join(rel);
                 // --- END OF FIX ---
 
                 let body = match std::fs::read(&full_path) {
