@@ -882,22 +882,39 @@
 			});
 
 			// Expand Next and Expand All
-			async function expandNextWave() {
-				if (!cyRef || !lastExpandFn) return;
-				const targets = cyRef.$('node[expandable = "true"]').toArray();
-				if (!targets.length) return;
-				for (const node of targets) {
-					const id = node.id();
-					try {
-						const { nodes: newNodes, edges: newEdges } = await lastExpandFn(id);
-						if (newNodes.length > 0 || newEdges.length > 0) {
-							cyRef.add([...newNodes, ...newEdges]);
-							node.data('expandable', 'false');
-						}
-					} catch (e) { console.error('ExpandNext error', e); }
-				}
-				cyRef.layout({ name: 'breadthfirst', directed: true, padding: 10, spacingFactor: 1.1 }).run();
-			}
+            async function expandNextWave() {
+                if (!cyRef || !lastExpandFn) return;
+                const targets = cyRef.$('node[expandable = "true"]').toArray();
+                if (!targets.length) return;
+
+                // Run all expansion requests for the current wave in parallel
+                const expansionPromises = targets.map(node => 
+                    lastExpandFn(node.id()).then(result => ({ ...result, node }))
+                );
+
+                const allNewElements = { nodes: [], edges: [] };
+                
+                try {
+                    const results = await Promise.all(expansionPromises);
+                    
+                    // Collect all new nodes and edges from the results
+                    for (const { nodes: newNodes, edges: newEdges, node } of results) {
+                        if (newNodes.length > 0 || newEdges.length > 0) {
+                            allNewElements.nodes.push(...newNodes);
+                            allNewElements.edges.push(...newEdges);
+                            node.data('expandable', 'false'); // Mark original node as expanded
+                        }
+                    }
+
+                    // Add all new elements to the graph in a single batch
+                    if (allNewElements.nodes.length > 0 || allNewElements.edges.length > 0) {
+                        cyRef.add([...allNewElements.nodes, ...allNewElements.edges]);
+                        cyRef.layout({ name: 'breadthfirst', directed: true, padding: 10, spacingFactor: 1.1 }).run();
+                    }
+                } catch (e) {
+                    console.error('ExpandNextWave error:', e);
+                }
+            }
 			async function expandAll() {  
 				if (!cyRef || !lastExpandFn) {  
 					console.warn('No active visualization to expand');  
