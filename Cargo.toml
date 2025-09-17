@@ -32,10 +32,10 @@ freeze = { version="0.1.1", git="https://github.com/luketpeterson/Freeze.git" } 
 gxhash = {version="3.5", git="https://github.com/ogxd/gxhash"} # for dag_serialization
 
 [workspace.dependencies.pathmap]
-# This configuration uses a specific, stable version from crates.io.
-version = "0.1.5"
+# This configuration uses a specific, stable commit from GitHub.
+git = "https://github.com/Adam-Vandervorst/PathMap.git"
+rev = "c53beb37885b310433285743818306325176143c" # Using the specific commit hash you provided
 features = ["zipper_tracking", "arena_compact"]
 
-# The git dependency below is removed to ensure a stable release is used.
-# git = "https://github.com/Adam-Vandervorst/PathMap.git"
-# rev = "d82932525f0a384071328e533038931844973347"
+# The 'tag' field is replaced with 'rev' to lock to a specific commit hash.
+# tag = "v0.1.5"
