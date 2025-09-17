@@ -1,0 +1,22 @@
+name: Keep-Alive Ping
+
+on:
+  schedule:
+    # This runs the workflow every 10 minutes to keep the services alive.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Frontend URL
+        run: |
+          echo "Pinging frontend at https://mork-frontend.onrender.com"
+          curl -sS --fail https://mork-frontend.onrender.com/ > /dev/null || echo "Frontend ping failed"
+
+      - name: Ping Backend URL
+        run: |
+          echo "Pinging backend at https://mork-server.onrender.com"
+          # The backend also serves the index.html at the root, so this is a valid endpoint to ping.
+          curl -sS --fail https://mork-server.onrender.com/ > /dev/null || echo "Backend ping failed"
