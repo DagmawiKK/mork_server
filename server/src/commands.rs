@@ -514,20 +514,24 @@ fn dump_as_format<W: Write>(ctx: &MorkService, writer: &mut std::io::BufWriter<W
             }
             buf.with(|b| {
                 let mut rz = ctx.0.space.read_zipper(&mut reader);
-                pathmap::path_serialization::serialize_paths_from_funcs(writer, &mut rz, |rz| Ok(rz.to_next_val()), |rz| {
-                    let p = rz.origin_path();
-                    let mut oz = ExprZipper::new(Expr{ ptr: unsafe { (*b.get()).as_mut_ptr() } });
-                    // println!("dump transforming {:?} with {:?} => {:?}", Expr{ ptr: p.as_ptr() as *mut u8 }, pattern.borrow(), template.borrow());
-                    match (Expr{ ptr: p.as_ptr() as *mut u8 }.transformData(pattern.borrow(), template.borrow(), &mut oz)) {
-                        Ok(()) => unsafe {
-                            // println!("success {:?}", Expr{ ptr: (*b.get()).as_mut_ptr() });
-                            Some(slice_from_raw_parts((*b.get()).as_ptr(), oz.loc).as_ref().unwrap())
-                        }
-                        Err(_e) => {
-                            // println!("failure");
-                            None
+                let wn = rz.witness();
+                pathmap::path_serialization::for_each_path_serialize(writer, || {
+                    while let Some(()) = rz.to_next_get_val_with_witness(&wn) {
+                        let p = rz.origin_path();
+                        let mut oz = ExprZipper::new(Expr{ ptr: unsafe { (*b.get()).as_mut_ptr() } });
+                        // println!("dump transforming {:?} with {:?} => {:?}", Expr{ ptr: p.as_ptr() as *mut u8 }, pattern.borrow(), template.borrow());
+                        match (Expr{ ptr: p.as_ptr() as *mut u8 }.transformData(pattern.borrow(), template.borrow(), &mut oz)) {
+                            Ok(()) => unsafe {
+                                // println!("success {:?}", Expr{ ptr: (*b.get()).as_mut_ptr() });
+                                return Ok(Some(slice_from_raw_parts((*b.get()).as_ptr(), oz.loc).as_ref().unwrap()))
+                            }
+                            Err(_e) => {
+                                // println!("failure");
+                                continue
+                            }
                         }
                     }
+                    Ok(None)
                 }
             )
             }).map_err(|e| CommandError::internal(format!("Error occurred writing raw paths: {e:?}")))?;
@@ -1543,104 +1547,6 @@ async fn get_all_post_frame_bytes(req : &mut Request<IncomingBody>) -> Result<By
 }
 
 // ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
-// paths_resolved
-// ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
-
-/// Returns a JSON array of { raw, expr } entries, where `raw` is the debug string of the path bytes
-/// and `expr` is the symbol-resolved S-Expression rendered using the provided (pattern, template)
-pub struct PathsResolvedCmd;
-
-impl CommandDefinition for PathsResolvedCmd {
-	const NAME: &'static str = "paths_resolved";
-	const CONST_CMD: &'static Self = &Self;
-	const CONSUME_WORKER: bool = true;
-	fn args() -> &'static [ArgDef] {
-		&[ArgDef{
-			arg_type: ArgType::String,
-			name: "pattern",
-			desc: "The pattern to select expressions",
-			required: true
-		},
-		ArgDef{
-			arg_type: ArgType::String,
-			name: "template",
-			desc: "The template to render expressions",
-			required: true
-		}]
-	}
-	fn properties() -> &'static [PropDef] {
-		&[PropDef {
-			arg_type: ArgType::UInt,
-			name: "max_write",
-			desc: "Max number of expressions to include",
-			required: false
-		}]
-	}
-	async fn work(ctx: MorkService, cmd: Command, _thread: Option<WorkThreadHandle>, _req: Request<IncomingBody>) -> Result<WorkResult, CommandError> {
-		let (pattern, template) = pattern_template_from_sexpr_pair(&ctx.0.space, cmd.args[0].as_str(), cmd.args[1].as_str())
-			.map_err(|e| CommandError::external(StatusCode::BAD_REQUEST, format!("{e:?}")))?;
-
-		let pat_reader = ctx.0.space.new_reader_async(&derive_prefix_from_expr_slice(pattern.as_bytes()).till_constant_to_till_last_constant(), &()).await?;
-		let max_write = cmd.properties[0].as_ref().map(|x| x.as_u64() as usize).unwrap_or(usize::MAX);
-
-		let out = tokio::task::spawn_blocking(move || -> Result<WorkResult, CommandError> {
-			let mut buffer = Vec::with_capacity(4096);
-			let mut writer = std::io::BufWriter::new(&mut buffer);
-			dump_paths_resolved_as_json(&ctx, pat_reader, pattern, template, max_write, &mut writer)?;
-			writer.flush()?;
-			drop(writer);
-			Ok(WorkResult::Immediate(hyper::body::Bytes::from(buffer)))
-		}).await??;
-
-		println!("paths_resolved command successful");
-		Ok(out)
-	}
-}
-
-fn dump_paths_resolved_as_json<W: Write>(ctx: &MorkService, mut reader: ReadPermission, pattern: OwnedExpr, template: OwnedExpr, max_write: usize, writer: &mut std::io::BufWriter<W>) -> Result<(), CommandError> {
-	let mut rz = ctx.0.space.read_zipper(&mut reader);
-	let wn = rz.witness();
-
-	let mut expr_buffer = Vec::with_capacity(4096);
-	let mut first = true;
-	let mut written = 0usize;
-	writer.write(b"[")?;
-	thread_local!{
-		static buf: std::cell::UnsafeCell<[u8; 4096]> = std::cell::UnsafeCell::new([0; 4096]);
-	}
-	buf.with(|b| {
-		while written < max_write {
-			if let Some(()) = rz.to_next_get_val_with_witness(&wn) {
-				let p = rz.origin_path();
-				let mut oz = ExprZipper::new(Expr{ ptr: unsafe { (*b.get()).as_mut_ptr() } });
-				// transform path -> expression using (pattern, template)
-				let Ok(()) = (Expr{ ptr: p.as_ptr() as *mut u8 }.transformData(pattern.borrow(), template.borrow(), &mut oz)) else { continue };
-
-				// serialize expr to a string using symbol table
-				let expr_out = mork_bytestring::Expr { ptr: unsafe { (*b.get()).as_mut_ptr() } };
-				serialize_sexpr_into(expr_out.ptr, &mut expr_buffer, ctx.0.space.symbol_table())
-					.map_err(|e|CommandError::internal(format!("failed to serialize to MeTTa S-Expressions: {e:?}")))?;
-				let expr_str = std::str::from_utf8(&expr_buffer[..]).map_err(|e| CommandError::internal(format!("utf8 error: {e:?}")))?;
-
-				if first { first = false } else { writer.write(b",\n")?; }
-				// raw path via Debug formatting
-				let raw_path = format!("{:?}", rz.path());
-				let json = serde_json::json!({"raw": raw_path, "expr": expr_str});
-				writer.write(serde_json::to_string(&json)?.as_bytes())?;
-				expr_buffer.clear();
-				written += 1;
-			} else {
-				break
-			}
-		}
-		Ok::<(), CommandError>(())
-	})?;
-	writer.write(b"]")?;
-	Ok(())
-}
-
-
-// ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
 // Command mechanism implementation
 // ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
 
@@ -1940,4 +1846,101 @@ async fn misbehaving_transform() -> Result<(), ()> {
     // this prints "c" !
     println!("{}", String::from_utf8(out).unwrap());
     Ok(())
+}
+
+// ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
+// paths_resolved
+// ===***===***===***===***===***===***===***===***===***===***===***===***===***===***===***
+
+/// Returns a JSON array of { raw, expr } entries, where `raw` is the debug string of the path bytes
+/// and `expr` is the symbol-resolved S-Expression rendered using the provided (pattern, template)
+pub struct PathsResolvedCmd;
+
+impl CommandDefinition for PathsResolvedCmd {
+	const NAME: &'static str = "paths_resolved";
+	const CONST_CMD: &'static Self = &Self;
+	const CONSUME_WORKER: bool = true;
+	fn args() -> &'static [ArgDef] {
+		&[ArgDef{
+			arg_type: ArgType::String,
+			name: "pattern",
+			desc: "The pattern to select expressions",
+			required: true
+		},
+		ArgDef{
+			arg_type: ArgType::String,
+			name: "template",
+			desc: "The template to render expressions",
+			required: true
+		}]
+	}
+	fn properties() -> &'static [PropDef] {
+		&[PropDef {
+			arg_type: ArgType::UInt,
+			name: "max_write",
+			desc: "Max number of expressions to include",
+			required: false
+		}]
+	}
+	async fn work(ctx: MorkService, cmd: Command, _thread: Option<WorkThreadHandle>, _req: Request<IncomingBody>) -> Result<WorkResult, CommandError> {
+		let (pattern, template) = pattern_template_from_sexpr_pair(&ctx.0.space, cmd.args[0].as_str(), cmd.args[1].as_str())
+			.map_err(|e| CommandError::external(StatusCode::BAD_REQUEST, format!("{e:?}")))?;
+
+		let pat_reader = ctx.0.space.new_reader_async(&derive_prefix_from_expr_slice(pattern.as_bytes()).till_constant_to_till_last_constant(), &()).await?;
+		let max_write = cmd.properties[0].as_ref().map(|x| x.as_u64() as usize).unwrap_or(usize::MAX);
+
+		let out = tokio::task::spawn_blocking(move || -> Result<WorkResult, CommandError> {
+			let mut buffer = Vec::with_capacity(4096);
+			let mut writer = std::io::BufWriter::new(&mut buffer);
+			dump_paths_resolved_as_json(&ctx, pat_reader, pattern, template, max_write, &mut writer)?;
+			writer.flush()?;
+			drop(writer);
+			Ok(WorkResult::Immediate(hyper::body::Bytes::from(buffer)))
+		}).await??;
+
+		println!("paths_resolved command successful");
+		Ok(out)
+	}
+}
+
+fn dump_paths_resolved_as_json<W: Write>(ctx: &MorkService, mut reader: ReadPermission, pattern: OwnedExpr, template: OwnedExpr, max_write: usize, writer: &mut std::io::BufWriter<W>) -> Result<(), CommandError> {
+	let mut rz = ctx.0.space.read_zipper(&mut reader);
+	let wn = rz.witness();
+
+	let mut expr_buffer = Vec::with_capacity(4096);
+	let mut first = true;
+	let mut written = 0usize;
+	writer.write(b"[")?;
+	thread_local!{
+		static buf: std::cell::UnsafeCell<[u8; 4096]> = std::cell::UnsafeCell::new([0; 4096]);
+	}
+	buf.with(|b| {
+		while written < max_write {
+			if let Some(()) = rz.to_next_get_val_with_witness(&wn) {
+				let p = rz.origin_path();
+				let mut oz = ExprZipper::new(Expr{ ptr: unsafe { (*b.get()).as_mut_ptr() } });
+				// transform path -> expression using (pattern, template)
+				let Ok(()) = (Expr{ ptr: p.as_ptr() as *mut u8 }.transformData(pattern.borrow(), template.borrow(), &mut oz)) else { continue };
+
+				// serialize expr to a string using symbol table
+				let expr_out = mork_bytestring::Expr { ptr: unsafe { (*b.get()).as_mut_ptr() } };
+				serialize_sexpr_into(expr_out.ptr, &mut expr_buffer, ctx.0.space.symbol_table())
+					.map_err(|e|CommandError::internal(format!("failed to serialize to MeTTa S-Expressions: {e:?}")))?;
+				let expr_str = std::str::from_utf8(&expr_buffer[..]).map_err(|e| CommandError::internal(format!("utf8 error: {e:?}")))?;
+
+				if first { first = false } else { writer.write(b",\n")?; }
+				// raw path via Debug formatting
+				let raw_path = format!("{:?}", rz.path());
+				let json = serde_json::json!({"raw": raw_path, "expr": expr_str});
+				writer.write(serde_json::to_string(&json)?.as_bytes())?;
+				expr_buffer.clear();
+				written += 1;
+			} else {
+				break
+			}
+		}
+		Ok::<(), CommandError>(())
+	})?;
+	writer.write(b"]")?;
+	Ok(())
 }
