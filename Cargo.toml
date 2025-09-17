@@ -32,10 +32,10 @@ freeze = { version="0.1.1", git="https://github.com/luketpeterson/Freeze.git" } 
 gxhash = {version="3.5", git="https://github.com/ogxd/gxhash"} # for dag_serialization
 
 [workspace.dependencies.pathmap]
-# This configuration uses a specific, stable commit from GitHub.
+# This configuration uses the specific, stable release tag from GitHub.
 git = "https://github.com/Adam-Vandervorst/PathMap.git"
-rev = "c53beb37885b310433285743818306325176143c" # Using the specific commit hash you provided
+tag = "stable" # Using the release tag named "stable"
 features = ["zipper_tracking", "arena_compact"]
 
-# The 'tag' field is replaced with 'rev' to lock to a specific commit hash.
-# tag = "v0.1.5"
+# The 'rev' key is replaced with 'tag' to point to the named release.
+# rev = "c53beb37885b310433285743818306325176143c"
